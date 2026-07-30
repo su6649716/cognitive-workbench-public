@@ -123,6 +123,60 @@ def parse_metadata(raw: str | None) -> dict[str, Any]:
     return value
 
 
+def same_episode(event: dict[str, Any], episode_id: str) -> bool:
+    return str(event.get("episode_id") or event.get("id")) == episode_id
+
+
+def guard_new_event(events: list[dict[str, Any]], args: argparse.Namespace) -> None:
+    same_project_type = [
+        event
+        for event in events
+        if str(event.get("project", "")).casefold() == args.project.casefold()
+        and event.get("type") == args.type
+    ]
+    for event in reversed(same_project_type):
+        if str(event.get("statement", "")).strip() == args.statement.strip():
+            raise ValueError(f"duplicate event statement; update existing event {event.get('id')}")
+
+    if args.episode_id:
+        same_stage = [event for event in same_project_type if same_episode(event, args.episode_id)]
+        if args.type in {"expansion_gate", "task_close", "portfolio_review"} and same_stage:
+            raise ValueError(
+                f"{args.type} already exists in this episode; update existing event "
+                f"{same_stage[-1].get('id')}"
+            )
+        live_hypotheses = [
+            event
+            for event in same_stage
+            if args.type == "hypothesis" and event.get("status") in {"open", "active"}
+        ]
+        if live_hypotheses:
+            raise ValueError(
+                "an open hypothesis already exists in this episode; update or resolve event "
+                f"{live_hypotheses[-1].get('id')}"
+            )
+
+    if args.thread_id:
+        same_thread = [
+            event
+            for event in same_project_type
+            if str(event.get("thread_id") or "") == args.thread_id
+        ]
+        if args.type in {"expansion_gate", "task_close", "portfolio_review"} and same_thread:
+            raise ValueError(
+                "this workflow already exists for the task; update event "
+                f"{same_thread[-1].get('id')}"
+            )
+        live_same_thread = [
+            event for event in same_thread if event.get("status") in {"open", "active"}
+        ]
+        if live_same_thread:
+            raise ValueError(
+                "a live event of this workflow already exists for the task; update event "
+                f"{live_same_thread[-1].get('id')}"
+            )
+
+
 def command_record(args: argparse.Namespace) -> int:
     if args.type not in EVENT_TYPES:
         raise ValueError(f"unsupported type: {args.type}")
@@ -131,8 +185,15 @@ def command_record(args: argparse.Namespace) -> int:
     if args.due_at:
         parse_iso(args.due_at)
 
+    if not args.thread_id and not args.thread_unavailable_reason:
+        raise ValueError("record requires --thread-id or --thread-unavailable-reason")
+    if args.type == "hypothesis" and not args.due_at and not args.review_trigger:
+        raise ValueError("hypothesis requires --due-at or --review-trigger")
+
     rows = load_lines(args.ledger)
-    existing_events = {event["id"]: event for event in fold_events(rows)}
+    folded = fold_events(rows)
+    existing_events = {event["id"]: event for event in folded}
+    guard_new_event(folded, args)
     parent = None
     if args.parent_id:
         parent = existing_events.get(args.parent_id)
@@ -159,10 +220,12 @@ def command_record(args: argparse.Namespace) -> int:
         "statement": args.statement,
         "prediction": args.prediction,
         "due_at": args.due_at,
+        "review_trigger": args.review_trigger,
         "status": args.status,
         "outcome": None,
         "metadata": parse_metadata(args.metadata_json),
         "notes": [],
+        "thread_unavailable_reason": args.thread_unavailable_reason,
     }
     append_line(args.ledger, payload)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -171,11 +234,13 @@ def command_record(args: argparse.Namespace) -> int:
 
 def command_update(args: argparse.Namespace) -> int:
     rows = load_lines(args.ledger)
-    known_ids = {row.get("id") for row in rows if row.get("record_kind") == "event"}
-    if args.id not in known_ids:
+    events = {event.get("id"): event for event in fold_events(rows)}
+    if args.id not in events:
         raise ValueError(f"event not found: {args.id}")
     if args.status and args.status not in STATUSES:
         raise ValueError(f"unsupported status: {args.status}")
+    if args.thread_id and args.thread_unavailable_reason:
+        raise ValueError("use either --thread-id or --thread-unavailable-reason, not both")
 
     changes: dict[str, Any] = {}
     if args.status:
@@ -186,12 +251,29 @@ def command_update(args: argparse.Namespace) -> int:
         if args.due_at:
             parse_iso(args.due_at)
         changes["due_at"] = args.due_at or None
+    if args.review_trigger is not None:
+        changes["review_trigger"] = args.review_trigger or None
+    if args.thread_id is not None:
+        changes["thread_id"] = args.thread_id or None
+        changes["thread_unavailable_reason"] = None
+    if args.thread_unavailable_reason is not None:
+        changes["thread_unavailable_reason"] = args.thread_unavailable_reason or None
     if args.metadata_json:
         changes["metadata"] = parse_metadata(args.metadata_json)
     if args.note:
         changes["notes_append"] = [args.note]
     if not changes:
         raise ValueError("update requires at least one change")
+
+    candidate = dict(events[args.id])
+    apply_changes(candidate, changes)
+    if (
+        candidate.get("type") == "hypothesis"
+        and candidate.get("status") in {"open", "active"}
+        and not candidate.get("due_at")
+        and not candidate.get("review_trigger")
+    ):
+        raise ValueError("open hypothesis requires due_at or review_trigger")
 
     payload = {
         "record_kind": "update",
@@ -232,6 +314,72 @@ def command_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_audit(args: argparse.Namespace) -> int:
+    events = fold_events(load_lines(args.ledger))
+    duplicate_workflows: list[dict[str, Any]] = []
+    acknowledged_legacy_duplicates: list[dict[str, str]] = []
+    grouped: dict[tuple[str, str, str], list[str]] = {}
+    for event in events:
+        if event.get("type") not in {"expansion_gate", "task_close", "portfolio_review"}:
+            continue
+        migration = event.get("metadata", {}).get("lifecycle_migration", {})
+        legacy_target = migration.get("legacy_duplicate_of") if isinstance(migration, dict) else None
+        if legacy_target:
+            acknowledged_legacy_duplicates.append(
+                {"event_id": str(event.get("id")), "canonical_event_id": str(legacy_target)}
+            )
+            continue
+        key = (
+            str(event.get("project", "")).casefold(),
+            str(event.get("episode_id") or event.get("id")),
+            str(event.get("type")),
+        )
+        grouped.setdefault(key, []).append(str(event.get("id")))
+    for (project, episode_id, event_type), ids in grouped.items():
+        if len(ids) > 1:
+            duplicate_workflows.append(
+                {
+                    "project": project,
+                    "episode_id": episode_id,
+                    "type": event_type,
+                    "event_ids": ids,
+                }
+            )
+
+    missing_thread = [
+        str(event.get("id"))
+        for event in events
+        if not event.get("thread_id") and not event.get("thread_unavailable_reason")
+    ]
+    missing_review = [
+        str(event.get("id"))
+        for event in events
+        if event.get("type") == "hypothesis"
+        and event.get("status") in {"open", "active"}
+        and not event.get("due_at")
+        and not event.get("review_trigger")
+    ]
+    due_now = dt.datetime.now().astimezone()
+    overdue = [
+        str(event.get("id"))
+        for event in events
+        if event.get("status") in {"open", "active"}
+        and event.get("due_at")
+        and parse_iso(str(event.get("due_at"))) <= due_now
+    ]
+    payload = {
+        "event_count": len(events),
+        "missing_task_link": missing_thread,
+        "open_hypothesis_missing_review_point": missing_review,
+        "duplicate_workflows_in_episode": duplicate_workflows,
+        "acknowledged_legacy_duplicates": acknowledged_legacy_duplicates,
+        "overdue_open_events": overdue,
+        "healthy": not (missing_thread or missing_review or duplicate_workflows or overdue),
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if payload["healthy"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
@@ -241,12 +389,14 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--type", required=True)
     record.add_argument("--project", required=True)
     record.add_argument("--thread-id", default=None)
+    record.add_argument("--thread-unavailable-reason", default=None)
     record.add_argument("--episode-id", default=None)
     record.add_argument("--parent-id", default=None)
     record.add_argument("--source", required=True)
     record.add_argument("--statement", required=True)
     record.add_argument("--prediction", default=None)
     record.add_argument("--due-at", default=None)
+    record.add_argument("--review-trigger", default=None)
     record.add_argument("--status", default="open")
     record.add_argument("--metadata-json", default=None)
     record.set_defaults(handler=command_record)
@@ -256,6 +406,9 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--status", default=None)
     update.add_argument("--outcome", default=None)
     update.add_argument("--due-at", default=None)
+    update.add_argument("--review-trigger", default=None)
+    update.add_argument("--thread-id", default=None)
+    update.add_argument("--thread-unavailable-reason", default=None)
     update.add_argument("--metadata-json", default=None)
     update.add_argument("--note", default=None)
     update.set_defaults(handler=command_update)
@@ -269,6 +422,9 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--due-before", default=None)
     listing.add_argument("--limit", type=int, default=100)
     listing.set_defaults(handler=command_list)
+
+    audit = subparsers.add_parser("audit", help="report linkage, review and duplication gaps")
+    audit.set_defaults(handler=command_audit)
 
     return parser
 

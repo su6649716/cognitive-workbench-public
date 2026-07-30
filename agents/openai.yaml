@@ -1,4 +1,4 @@
 interface:
   display_name: "认知工作助手"
-  short_description: "自动管理项目扩张、假设验证、任务收口与代码 Git 基线"
-  default_prompt: "使用 $cognitive-workbench 检查当前任务的认知风险，并为代码项目建立安全的 Git 基线与收口。"
+  short_description: "管理项目扩张、假设验证、入口索引与工程收口"
+  default_prompt: "使用 $cognitive-workbench 检查当前任务的认知风险，续接已有事件，并维护项目入口、Git 基线与真实收口。"

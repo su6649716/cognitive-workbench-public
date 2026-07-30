@@ -45,6 +45,21 @@ task_close
 - 后续关联事件：使用相同 `episode_id`，并把直接上游事件写入 `parent_id`。
 - 旧事件没有 `episode_id` 时，查询结果默认把该事件 ID 当作阶段 ID。
 - 当前任务 ID 可取得时必须写入 `thread_id`；不可取得时保留来源路径或任务标题，不虚构 ID。
+- 新事件未写 `thread_id` 时必须记录无法取得的原因；不能把空值当作正常状态。
+- `hypothesis` 必须带日历时间或结果触发条件，保证未来知道何时回看。
+
+## 写入前机械检查
+
+先运行相关项目/阶段查询，再决定 `record` 或 `update`：
+
+- 同一 `episode_id` 已有 `expansion_gate`、`task_close` 或 `portfolio_review`：更新原事件。
+- 同一阶段已有 `open/active` 假设：先更新或解决原假设，不能并行制造同义测试。
+- 新事实只改变原决定的证据、实现状态或验证结果：更新原事件。
+- 只有真实问题改变、开始新的可区分测试或形成不同的长期决定时，才新建事件。
+
+定期运行 `scripts/cognitive_ledger.py audit`。历史缺口只报告，不为了账面整齐而猜测补写。
+
+旧账本已经存在的同阶段重复事件不删除、不覆盖。确认它们确属旧规则遗留后，在非主事件的 `metadata.lifecycle_migration.legacy_duplicate_of` 中指向保留的主事件；审计会继续展示这段历史，但不把已确认迁移视为当前故障。
 
 ## 用户决定与系统建议
 

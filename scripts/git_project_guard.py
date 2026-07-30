@@ -150,6 +150,89 @@ def generated_unignored(root: Path) -> list[str]:
     return exposed
 
 
+def normalize_task_paths(root: Path, values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for value in values:
+        candidate = (root / value).resolve() if not Path(value).is_absolute() else Path(value).resolve()
+        try:
+            relative = candidate.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"task path is outside repository: {candidate}") from exc
+        path_text = str(relative)
+        if path_text not in normalized:
+            normalized.append(path_text)
+    if not normalized:
+        raise ValueError("close check requires at least one --task-path")
+    return normalized
+
+
+def porcelain_path(line: str) -> str:
+    value = line[3:] if len(line) > 3 else ""
+    if " -> " in value:
+        value = value.split(" -> ", 1)[1]
+    return value.strip('"')
+
+
+def path_in_scope(path: str, scopes: list[str]) -> bool:
+    return any(path == scope or path.startswith(scope.rstrip("/") + "/") for scope in scopes)
+
+
+def close_check(
+    root: Path,
+    baseline_head: str | None,
+    task_path_values: list[str],
+    working_tree: list[str],
+) -> dict[str, Any]:
+    task_paths = normalize_task_paths(root, task_path_values)
+    current_result = git(root, "rev-parse", "HEAD")
+    current_head = current_result.stdout.strip() if current_result.returncode == 0 else None
+    baseline = None if not baseline_head or baseline_head.lower() == "none" else baseline_head
+
+    task_status = git(
+        root,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=normal",
+        "--",
+        *task_paths,
+    )
+    dirty_task_lines = [line for line in task_status.stdout.splitlines() if line]
+    dirty_task_paths = [porcelain_path(line) for line in dirty_task_lines]
+    all_dirty_paths = [porcelain_path(line) for line in working_tree]
+    unrelated_dirty_paths = [path for path in all_dirty_paths if not path_in_scope(path, task_paths)]
+
+    committed_paths: list[str] = []
+    if current_head and baseline and current_head != baseline:
+        committed = git(root, "diff", "--name-only", f"{baseline}..{current_head}", "--", *task_paths)
+        if committed.returncode == 0:
+            committed_paths = [line for line in committed.stdout.splitlines() if line]
+    elif current_head and baseline is None:
+        committed = git(root, "show", "--pretty=format:", "--name-only", current_head, "--", *task_paths)
+        if committed.returncode == 0:
+            committed_paths = [line for line in committed.stdout.splitlines() if line]
+
+    reasons: list[str] = []
+    if dirty_task_paths:
+        reasons.append("task paths still contain uncommitted changes")
+    if current_head == baseline:
+        reasons.append("HEAD has not advanced from the recorded baseline")
+    if not current_head:
+        reasons.append("repository has no commit")
+    if not committed_paths:
+        reasons.append("no committed change was found under the declared task paths")
+
+    return {
+        "ready": not reasons,
+        "baseline_head": baseline,
+        "current_head": current_head,
+        "task_paths": task_paths,
+        "committed_paths": committed_paths,
+        "dirty_task_paths": dirty_task_paths,
+        "unrelated_dirty_paths": unrelated_dirty_paths,
+        "reasons": reasons,
+    }
+
+
 def initialize(path: Path) -> None:
     result = git(path, "init", "--initial-branch=main")
     if result.returncode == 0:
@@ -160,7 +243,14 @@ def initialize(path: Path) -> None:
     git(path, "branch", "-M", "main")
 
 
-def inspect(path: Path, init_if_missing: bool) -> dict[str, Any]:
+def inspect(
+    path: Path,
+    init_if_missing: bool,
+    *,
+    check_close: bool = False,
+    baseline_head: str | None = None,
+    task_paths: list[str] | None = None,
+) -> dict[str, Any]:
     resolved = path.expanduser().resolve()
     if not resolved.exists() or not resolved.is_dir():
         raise ValueError(f"project path is not a directory: {resolved}")
@@ -211,7 +301,7 @@ def inspect(path: Path, init_if_missing: bool) -> dict[str, Any]:
     remote_result = git(root, "remote")
     status_lines = [line for line in status_result.stdout.splitlines() if line]
 
-    return {
+    payload: dict[str, Any] = {
         "status": "ready",
         "requested_path": str(resolved),
         "repo_root": str(root),
@@ -230,19 +320,36 @@ def inspect(path: Path, init_if_missing: bool) -> dict[str, Any]:
             "working_tree_scan_timed_out": status_scan_timed_out,
         },
     }
+    if check_close:
+        payload["closure"] = close_check(
+            root,
+            baseline_head,
+            task_paths or [],
+            status_lines,
+        )
+    return payload
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--path", type=Path, required=True)
     parser.add_argument("--init-if-missing", action="store_true")
+    parser.add_argument("--check-close", action="store_true")
+    parser.add_argument("--baseline-head", default=None)
+    parser.add_argument("--task-path", action="append", default=[])
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
     try:
-        payload = inspect(args.path, args.init_if_missing)
+        payload = inspect(
+            args.path,
+            args.init_if_missing,
+            check_close=args.check_close,
+            baseline_head=args.baseline_head,
+            task_paths=args.task_path,
+        )
     except (OSError, ValueError) as exc:
         print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False, indent=2))
         return 2
