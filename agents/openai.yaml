@@ -1,4 +1,4 @@
 interface:
   display_name: "认知工作助手"
-  short_description: "管理项目扩张、假设验证、入口索引与工程收口"
-  default_prompt: "使用 $cognitive-workbench 检查当前任务的认知风险，续接已有事件，并维护项目入口、Git 基线与真实收口。"
+  short_description: "主动补全系统联动，并管理验证、索引与真实收口"
+  default_prompt: "使用 $cognitive-workbench 恢复当前需求的父系统逻辑，主动补全必要上下游，同时守住本轮实施边界并完成验证与收口。"

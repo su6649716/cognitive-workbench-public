@@ -14,6 +14,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 LEDGER = SCRIPT_DIR / "cognitive_ledger.py"
 PROJECT_INDEX = SCRIPT_DIR / "project_index.py"
 GIT_GUARD = SCRIPT_DIR / "git_project_guard.py"
+SKILL_ROOT = SCRIPT_DIR.parent
 
 
 def run(*arguments: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -32,8 +33,10 @@ class ProjectIndexTests(unittest.TestCase):
             root = Path(temporary)
             project = root / "source"
             artifact = root / "认知生长学校.app"
+            product_doc = root / "PRODUCT.md"
             project.mkdir()
             artifact.write_text("bundle", encoding="utf-8")
+            product_doc.write_text("# 产品原则\n", encoding="utf-8")
             index = root / "index.json"
 
             created = run(
@@ -54,6 +57,16 @@ class ProjectIndexTests(unittest.TestCase):
                 "http://127.0.0.1:5173/",
                 "--thread-id",
                 "thread-1",
+                "--system-name",
+                "认知成长系统",
+                "--component-role",
+                "学习内容生产与阅读",
+                "--downstream-project",
+                "学习观测台",
+                "--product-doc",
+                str(product_doc),
+                "--source-of-truth",
+                "学习记录以本项目数据库为准",
                 "--status",
                 "active",
             )
@@ -90,6 +103,76 @@ class ProjectIndexTests(unittest.TestCase):
             )
             self.assertEqual(found.returncode, 0, found.stderr)
             self.assertEqual(len(json.loads(found.stdout)), 1)
+
+            found_by_role = run(
+                "python3",
+                str(PROJECT_INDEX),
+                "--index",
+                str(index),
+                "find",
+                "--query",
+                "内容生产",
+            )
+            self.assertEqual(found_by_role.returncode, 0, found_by_role.stderr)
+
+            observer = root / "observer"
+            observer.mkdir()
+            second = run(
+                "python3",
+                str(PROJECT_INDEX),
+                "--index",
+                str(index),
+                "upsert",
+                "--name",
+                "学习观测台",
+                "--root",
+                str(observer),
+                "--system-name",
+                "认知成长系统",
+                "--component-role",
+                "学习结果汇总与复盘",
+                "--upstream-project",
+                "认知生长学校",
+            )
+            self.assertEqual(second.returncode, 0, second.stderr)
+
+            system = run(
+                "python3",
+                str(PROJECT_INDEX),
+                "--index",
+                str(index),
+                "system",
+                "--name",
+                "认知成长系统",
+            )
+            self.assertEqual(system.returncode, 0, system.stderr)
+            components = json.loads(system.stdout)["components"]
+            self.assertEqual({item["name"] for item in components}, {"认知生长学校", "学习观测台"})
+            self.assertEqual(json.loads(index.read_text(encoding="utf-8"))["schema_version"], 2)
+
+
+class SystemCoherenceReferenceTests(unittest.TestCase):
+    def test_system_coherence_contract_contains_required_boundaries(self) -> None:
+        reference = (SKILL_ROOT / "references" / "system-coherence.md").read_text(
+            encoding="utf-8"
+        )
+        for phrase in (
+            "广思考，窄执行",
+            "横向角色闭环",
+            "纵向数据闭环",
+            "必要联动",
+            "价值扩展",
+            "远期机会",
+            "本轮最终实施范围",
+            "获客与培训协同",
+            "一个员工可能绑定多个微信",
+            "经营观测组件的只读下游协议",
+        ):
+            self.assertIn(phrase, reference)
+
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("references/system-coherence.md", skill)
+        self.assertIn("scripts/project_index.py system", skill)
 
 
 class LedgerTests(unittest.TestCase):

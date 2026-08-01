@@ -26,7 +26,7 @@ def now_iso() -> str:
 
 def load_index(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {"schema_version": 1, "projects": []}
+        return {"schema_version": 2, "projects": []}
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or not isinstance(value.get("projects"), list):
         raise ValueError("project index must contain a projects list")
@@ -95,6 +95,12 @@ def matches(project: dict[str, Any], query: str) -> bool:
         *[str(value) for value in project.get("aliases", [])],
         *[str(value) for value in project.get("artifacts", [])],
         *[str(value) for value in project.get("run_entries", [])],
+        str(project.get("system_name", "")),
+        str(project.get("component_role", "")),
+        *[str(value) for value in project.get("upstream_projects", [])],
+        *[str(value) for value in project.get("downstream_projects", [])],
+        *[str(value) for value in project.get("product_docs", [])],
+        *[str(value) for value in project.get("source_of_truth", [])],
     ]
     return any(needle in field.casefold() for field in fields)
 
@@ -104,9 +110,11 @@ def command_upsert(args: argparse.Namespace) -> int:
         raise ValueError(f"unsupported status: {args.status}")
     root = resolve_existing(args.root, "project root", directory=True)
     artifacts = [resolve_existing(value, "artifact") for value in args.artifact]
+    product_docs = [resolve_existing(value, "product document") for value in args.product_doc]
     run_entries = unique(args.run_entry)
     with index_lock(args.index):
         payload = load_index(args.index)
+        payload["schema_version"] = max(int(payload.get("schema_version", 1)), 2)
         projects: list[dict[str, Any]] = payload["projects"]
 
         candidates = [project for project in projects if str(project.get("root")) == root]
@@ -135,6 +143,10 @@ def command_upsert(args: argparse.Namespace) -> int:
                 "run_entries": [],
                 "thread_ids": [],
                 "remote_urls": [],
+                "upstream_projects": [],
+                "downstream_projects": [],
+                "product_docs": [],
+                "source_of_truth": [],
             }
             projects.append(project)
 
@@ -161,6 +173,22 @@ def command_upsert(args: argparse.Namespace) -> int:
         project["remote_urls"] = unique(
             [*project.get("remote_urls", []), *args.remote_url]
         )
+        if args.system_name:
+            project["system_name"] = args.system_name.strip()
+        if args.component_role:
+            project["component_role"] = args.component_role.strip()
+        project["upstream_projects"] = unique(
+            [*project.get("upstream_projects", []), *args.upstream_project]
+        )
+        project["downstream_projects"] = unique(
+            [*project.get("downstream_projects", []), *args.downstream_project]
+        )
+        project["product_docs"] = unique(
+            [*project.get("product_docs", []), *product_docs]
+        )
+        project["source_of_truth"] = unique(
+            [*project.get("source_of_truth", []), *args.source_of_truth]
+        )
         if args.checkpoint:
             project["last_checkpoint"] = args.checkpoint
 
@@ -186,6 +214,19 @@ def command_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_system(args: argparse.Namespace) -> int:
+    needle = args.name.strip().casefold()
+    projects = [
+        project
+        for project in load_index(args.index)["projects"]
+        if str(project.get("system_name", "")).strip().casefold() == needle
+    ]
+    projects = sorted(projects, key=lambda item: str(item.get("name", "")).casefold())
+    result = {"system_name": args.name.strip(), "components": projects}
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if projects else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--index", type=Path, default=DEFAULT_INDEX)
@@ -199,6 +240,12 @@ def build_parser() -> argparse.ArgumentParser:
     upsert.add_argument("--run-entry", action="append", default=[])
     upsert.add_argument("--thread-id", default=None)
     upsert.add_argument("--remote-url", action="append", default=[])
+    upsert.add_argument("--system-name", default=None)
+    upsert.add_argument("--component-role", default=None)
+    upsert.add_argument("--upstream-project", action="append", default=[])
+    upsert.add_argument("--downstream-project", action="append", default=[])
+    upsert.add_argument("--product-doc", action="append", default=[])
+    upsert.add_argument("--source-of-truth", action="append", default=[])
     upsert.add_argument("--status", default="unknown")
     upsert.add_argument("--checkpoint", default=None)
     upsert.set_defaults(handler=command_upsert)
@@ -210,6 +257,10 @@ def build_parser() -> argparse.ArgumentParser:
     listing = subparsers.add_parser("list", help="list indexed projects")
     listing.add_argument("--status", choices=sorted(STATUSES), default=None)
     listing.set_defaults(handler=command_list)
+
+    system = subparsers.add_parser("system", help="list components in one parent system")
+    system.add_argument("--name", required=True)
+    system.set_defaults(handler=command_system)
     return parser
 
 
