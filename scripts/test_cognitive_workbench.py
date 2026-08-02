@@ -175,6 +175,27 @@ class SystemCoherenceReferenceTests(unittest.TestCase):
         self.assertIn("scripts/project_index.py system", skill)
 
 
+class InteractionEntryTests(unittest.TestCase):
+    def test_one_phrase_entry_and_action_boundaries_are_explicit(self) -> None:
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        for phrase in (
+            '中文名“认知助手”',
+            "认知一下",
+            "启动认知助手",
+            "用认知助手看看",
+            "已经启动、这次准备怎么处理、是否会直接执行",
+            "先分析",
+            "然后直接做",
+            "收口",
+            "继承原句的动作动词和授权",
+        ):
+            self.assertIn(phrase, skill)
+
+        interface = (SKILL_ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        self.assertIn('display_name: "认知助手"', interface)
+        self.assertIn("$cognitive-workbench", interface)
+
+
 class LedgerTests(unittest.TestCase):
     def test_rejects_duplicate_close_and_unreviewable_hypothesis(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
