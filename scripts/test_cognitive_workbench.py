@@ -67,6 +67,23 @@ class ProjectIndexTests(unittest.TestCase):
                 str(product_doc),
                 "--source-of-truth",
                 "学习记录以本项目数据库为准",
+                "--planning-baseline-json",
+                json.dumps(
+                    {
+                        "ultimate_outcome": "完成真实学习任务",
+                        "component_job": "阅读与复盘",
+                        "not_responsible": ["替用户作答"],
+                    },
+                    ensure_ascii=False,
+                ),
+                "--interface-baseline-json",
+                json.dumps(
+                    {
+                        "primary_action": "继续阅读",
+                        "visual_semantics": "输入与来源事实清楚区分",
+                    },
+                    ensure_ascii=False,
+                ),
                 "--status",
                 "active",
             )
@@ -115,6 +132,17 @@ class ProjectIndexTests(unittest.TestCase):
             )
             self.assertEqual(found_by_role.returncode, 0, found_by_role.stderr)
 
+            found_by_plan = run(
+                "python3",
+                str(PROJECT_INDEX),
+                "--index",
+                str(index),
+                "find",
+                "--query",
+                "替用户作答",
+            )
+            self.assertEqual(found_by_plan.returncode, 0, found_by_plan.stderr)
+
             observer = root / "observer"
             observer.mkdir()
             second = run(
@@ -148,7 +176,11 @@ class ProjectIndexTests(unittest.TestCase):
             self.assertEqual(system.returncode, 0, system.stderr)
             components = json.loads(system.stdout)["components"]
             self.assertEqual({item["name"] for item in components}, {"认知生长学校", "学习观测台"})
-            self.assertEqual(json.loads(index.read_text(encoding="utf-8"))["schema_version"], 2)
+            stored = json.loads(index.read_text(encoding="utf-8"))
+            self.assertEqual(stored["schema_version"], 3)
+            reader = next(item for item in stored["projects"] if item["name"] == "认知生长学校")
+            self.assertEqual(reader["planning_baseline"]["component_job"], "阅读与复盘")
+            self.assertEqual(reader["interface_baseline"]["primary_action"], "继续阅读")
 
 
 class SystemCoherenceReferenceTests(unittest.TestCase):
@@ -167,12 +199,36 @@ class SystemCoherenceReferenceTests(unittest.TestCase):
             "获客与培训协同",
             "一个员工可能绑定多个微信",
             "经营观测组件的只读下游协议",
+            "最终要改变的现实",
+            "当前交付物不负责",
+            "纠正传播",
+            "interface-translation.md",
         ):
             self.assertIn(phrase, reference)
 
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("references/system-coherence.md", skill)
         self.assertIn("scripts/project_index.py system", skill)
+        self.assertIn("planning_baseline", skill)
+        self.assertIn("interface_baseline", skill)
+
+
+class InterfaceTranslationReferenceTests(unittest.TestCase):
+    def test_interface_translation_connects_task_logic_to_visual_semantics(self) -> None:
+        reference = (SKILL_ROOT / "references" / "interface-translation.md").read_text(
+            encoding="utf-8"
+        )
+        for phrase in (
+            "不是第五个工作流",
+            "先选择操作形态",
+            "界面合同",
+            "来源事实、可编辑输入、系统结果如何区分",
+            "失败与恢复",
+            "视觉语义",
+            "真实任务样本",
+            "不要因为进入界面转译而自动增加",
+        ):
+            self.assertIn(phrase, reference)
 
 
 class InteractionEntryTests(unittest.TestCase):
@@ -200,6 +256,28 @@ class LedgerTests(unittest.TestCase):
     def test_rejects_duplicate_close_and_unreviewable_hypothesis(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             ledger = Path(temporary) / "events.jsonl"
+            missing_outcome = run(
+                "python3",
+                str(LEDGER),
+                "--ledger",
+                str(ledger),
+                "record",
+                "--type",
+                "task_close",
+                "--project",
+                "缺少结果",
+                "--thread-id",
+                "thread-0",
+                "--source",
+                "test",
+                "--statement",
+                "不能空结果关闭",
+                "--status",
+                "closed",
+            )
+            self.assertEqual(missing_outcome.returncode, 2)
+            self.assertIn("requires --outcome", missing_outcome.stderr)
+
             first = run(
                 "python3",
                 str(LEDGER),
@@ -218,6 +296,8 @@ class LedgerTests(unittest.TestCase):
                 "保留一个收口事件",
                 "--status",
                 "closed",
+                "--outcome",
+                "决定已确认并完成验证",
             )
             self.assertEqual(first.returncode, 0, first.stderr)
             first_event = json.loads(first.stdout)
@@ -242,6 +322,8 @@ class LedgerTests(unittest.TestCase):
                 "再次收口同一阶段",
                 "--status",
                 "closed",
+                "--outcome",
+                "不应写入",
             )
             self.assertEqual(duplicate.returncode, 2)
             self.assertIn("update existing event", duplicate.stderr)

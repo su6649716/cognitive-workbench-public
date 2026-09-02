@@ -189,6 +189,8 @@ def command_record(args: argparse.Namespace) -> int:
         raise ValueError("record requires --thread-id or --thread-unavailable-reason")
     if args.type == "hypothesis" and not args.due_at and not args.review_trigger:
         raise ValueError("hypothesis requires --due-at or --review-trigger")
+    if args.status == "closed" and not str(args.outcome or "").strip():
+        raise ValueError("closed event requires --outcome")
 
     rows = load_lines(args.ledger)
     folded = fold_events(rows)
@@ -222,7 +224,7 @@ def command_record(args: argparse.Namespace) -> int:
         "due_at": args.due_at,
         "review_trigger": args.review_trigger,
         "status": args.status,
-        "outcome": None,
+        "outcome": args.outcome,
         "metadata": parse_metadata(args.metadata_json),
         "notes": [],
         "thread_unavailable_reason": args.thread_unavailable_reason,
@@ -274,6 +276,12 @@ def command_update(args: argparse.Namespace) -> int:
         and not candidate.get("review_trigger")
     ):
         raise ValueError("open hypothesis requires due_at or review_trigger")
+    if (
+        (args.status == "closed" or args.outcome is not None)
+        and candidate.get("status") == "closed"
+        and not str(candidate.get("outcome") or "").strip()
+    ):
+        raise ValueError("closed event requires outcome")
 
     payload = {
         "record_kind": "update",
@@ -359,6 +367,21 @@ def command_audit(args: argparse.Namespace) -> int:
         and not event.get("due_at")
         and not event.get("review_trigger")
     ]
+    closed_without_outcome: list[str] = []
+    acknowledged_legacy_outcomes: list[str] = []
+    for event in events:
+        if event.get("status") != "closed" or str(event.get("outcome") or "").strip():
+            continue
+        migration = event.get("metadata", {}).get("lifecycle_migration", {})
+        legacy_reason = (
+            migration.get("legacy_missing_outcome_reason")
+            if isinstance(migration, dict)
+            else None
+        )
+        if legacy_reason:
+            acknowledged_legacy_outcomes.append(str(event.get("id")))
+        else:
+            closed_without_outcome.append(str(event.get("id")))
     due_now = dt.datetime.now().astimezone()
     overdue = [
         str(event.get("id"))
@@ -371,10 +394,18 @@ def command_audit(args: argparse.Namespace) -> int:
         "event_count": len(events),
         "missing_task_link": missing_thread,
         "open_hypothesis_missing_review_point": missing_review,
+        "closed_events_missing_outcome": closed_without_outcome,
+        "acknowledged_legacy_missing_outcome": acknowledged_legacy_outcomes,
         "duplicate_workflows_in_episode": duplicate_workflows,
         "acknowledged_legacy_duplicates": acknowledged_legacy_duplicates,
         "overdue_open_events": overdue,
-        "healthy": not (missing_thread or missing_review or duplicate_workflows or overdue),
+        "healthy": not (
+            missing_thread
+            or missing_review
+            or closed_without_outcome
+            or duplicate_workflows
+            or overdue
+        ),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if payload["healthy"] else 1
@@ -398,6 +429,7 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--due-at", default=None)
     record.add_argument("--review-trigger", default=None)
     record.add_argument("--status", default="open")
+    record.add_argument("--outcome", default=None)
     record.add_argument("--metadata-json", default=None)
     record.set_defaults(handler=command_record)
 

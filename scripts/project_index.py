@@ -26,7 +26,7 @@ def now_iso() -> str:
 
 def load_index(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {"schema_version": 2, "projects": []}
+        return {"schema_version": 3, "projects": []}
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or not isinstance(value.get("projects"), list):
         raise ValueError("project index must contain a projects list")
@@ -78,6 +78,16 @@ def unique(values: list[str]) -> list[str]:
     return result
 
 
+def parse_json_object(raw: str, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} must be valid JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
 def resolve_existing(value: str, label: str, *, directory: bool = False) -> str:
     path = Path(value).expanduser().resolve()
     if not path.exists():
@@ -101,6 +111,8 @@ def matches(project: dict[str, Any], query: str) -> bool:
         *[str(value) for value in project.get("downstream_projects", [])],
         *[str(value) for value in project.get("product_docs", [])],
         *[str(value) for value in project.get("source_of_truth", [])],
+        json.dumps(project.get("planning_baseline", {}), ensure_ascii=False),
+        json.dumps(project.get("interface_baseline", {}), ensure_ascii=False),
     ]
     return any(needle in field.casefold() for field in fields)
 
@@ -114,7 +126,7 @@ def command_upsert(args: argparse.Namespace) -> int:
     run_entries = unique(args.run_entry)
     with index_lock(args.index):
         payload = load_index(args.index)
-        payload["schema_version"] = max(int(payload.get("schema_version", 1)), 2)
+        payload["schema_version"] = max(int(payload.get("schema_version", 1)), 3)
         projects: list[dict[str, Any]] = payload["projects"]
 
         candidates = [project for project in projects if str(project.get("root")) == root]
@@ -191,6 +203,14 @@ def command_upsert(args: argparse.Namespace) -> int:
         )
         if args.checkpoint:
             project["last_checkpoint"] = args.checkpoint
+        if args.planning_baseline_json is not None:
+            project["planning_baseline"] = parse_json_object(
+                args.planning_baseline_json, "planning baseline"
+            )
+        if args.interface_baseline_json is not None:
+            project["interface_baseline"] = parse_json_object(
+                args.interface_baseline_json, "interface baseline"
+            )
 
         atomic_write(args.index, payload)
     print(json.dumps(project, ensure_ascii=False, indent=2))
@@ -248,6 +268,8 @@ def build_parser() -> argparse.ArgumentParser:
     upsert.add_argument("--source-of-truth", action="append", default=[])
     upsert.add_argument("--status", default="unknown")
     upsert.add_argument("--checkpoint", default=None)
+    upsert.add_argument("--planning-baseline-json", default=None)
+    upsert.add_argument("--interface-baseline-json", default=None)
     upsert.set_defaults(handler=command_upsert)
 
     finding = subparsers.add_parser("find", help="find projects by name, alias or path")
