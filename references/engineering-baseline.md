@@ -19,6 +19,7 @@
 4. 检查 `.gitignore`、敏感文件警告、当前分支、HEAD、远程名称和修改前工作树。
 5. 使用 `scripts/project_index.py upsert` 登记已确认的项目名称、别名、源码根、成品/启动入口、任务 ID、远程地址和当前检查点。只写真实存在且已经核对的路径；源码与编译成品必须分开。
 6. 保存任务起点：目标、验收条件、HEAD、修改前脏文件、本轮任务路径和不碰的边界。存在认知事件时写入其 `metadata.engineering_baseline`；否则只保留在当前任务上下文，不为基线单独制造认知事件。
+7. 若任务属于中高风险产品或系统改造，在首次进入样板或完整代码实施前按 [collaborative-definition.md](collaborative-definition.md) 更新目的、边界、方案、样板与基线状态，并运行 `scripts/project_index.py gate`。工程仓库已经安全就绪不等于产品语义已经确认。
 
 ## 新仓库
 

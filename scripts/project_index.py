@@ -18,6 +18,9 @@ from typing import Any
 
 DEFAULT_INDEX = Path.home() / ".codex" / "memories" / "PROJECT_INDEX.json"
 STATUSES = {"active", "validating", "maintenance", "paused", "closed", "unknown"}
+PURPOSE_READY = {"user_explicit", "user_confirmed"}
+CONFIRMATION_READY = {"user_confirmed", "implementing", "validated"}
+SAMPLE_READY = {"accepted", "not_required"}
 
 
 def now_iso() -> str:
@@ -115,6 +118,30 @@ def matches(project: dict[str, Any], query: str) -> bool:
         json.dumps(project.get("interface_baseline", {}), ensure_ascii=False),
     ]
     return any(needle in field.casefold() for field in fields)
+
+
+def find_one(projects: list[dict[str, Any]], query: str) -> dict[str, Any]:
+    needle = query.strip().casefold()
+    exact = [
+        project
+        for project in projects
+        if needle
+        in {
+            str(project.get("name", "")).strip().casefold(),
+            str(project.get("root", "")).strip().casefold(),
+            *[
+                str(value).strip().casefold()
+                for value in project.get("aliases", [])
+            ],
+        }
+    ]
+    candidates = exact or [project for project in projects if matches(project, query)]
+    if not candidates:
+        raise ValueError(f"project not found: {query}")
+    if len(candidates) > 1:
+        names = ", ".join(str(project.get("name", "")) for project in candidates)
+        raise ValueError(f"project query is ambiguous: {query} ({names})")
+    return candidates[0]
 
 
 def command_upsert(args: argparse.Namespace) -> int:
@@ -247,6 +274,68 @@ def command_system(args: argparse.Namespace) -> int:
     return 0 if projects else 1
 
 
+def command_gate(args: argparse.Namespace) -> int:
+    project = find_one(load_index(args.index)["projects"], args.query)
+    planning = project.get("planning_baseline")
+    planning = planning if isinstance(planning, dict) else {}
+    statuses = {
+        "purpose_status": planning.get("purpose_status", "missing"),
+        "boundary_status": planning.get("boundary_status", "missing"),
+        "design_status": planning.get("design_status", "missing"),
+        "sample_status": planning.get("sample_status", "missing"),
+        "baseline_status": planning.get("baseline_status", "missing"),
+        "baseline_source": planning.get("baseline_source", "missing"),
+    }
+    reasons: list[str] = []
+
+    # Clear, reversible mechanical work may proceed without turning the index into
+    # paperwork. Medium/high risk work must have a current, user-owned definition.
+    if args.risk != "low":
+        if statuses["baseline_status"] != "current":
+            reasons.append("planning baseline is missing, stale or superseded")
+        if not str(planning.get("baseline_source", "")).strip():
+            reasons.append("planning baseline has no traceable source")
+        if statuses["purpose_status"] not in PURPOSE_READY:
+            reasons.append("purpose is not explicit or confirmed by the user")
+        if statuses["boundary_status"] not in PURPOSE_READY:
+            reasons.append("component responsibility and boundary are not user-confirmed")
+        if statuses["design_status"] not in CONFIRMATION_READY:
+            reasons.append("recommended form and acceptance criteria are not user-confirmed")
+
+    if (
+        args.target_stage == "full"
+        and args.user_facing
+        and args.risk == "high"
+    ):
+        if statuses["sample_status"] not in SAMPLE_READY:
+            reasons.append("representative sample is not accepted")
+        elif statuses["sample_status"] == "not_required" and not str(
+            planning.get("sample_not_required_reason", "")
+        ).strip():
+            reasons.append("sample is marked not_required without a reason")
+
+    result = {
+        "allowed": not reasons,
+        "project": {
+            "id": project.get("id"),
+            "name": project.get("name"),
+            "root": project.get("root"),
+        },
+        "risk": args.risk,
+        "target_stage": args.target_stage,
+        "user_facing": args.user_facing,
+        "statuses": statuses,
+        "reasons": reasons,
+        "next_action": (
+            "proceed within the confirmed scope"
+            if not reasons
+            else "return to collaborative definition; update the existing planning baseline after user confirmation"
+        ),
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["allowed"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--index", type=Path, default=DEFAULT_INDEX)
@@ -283,6 +372,15 @@ def build_parser() -> argparse.ArgumentParser:
     system = subparsers.add_parser("system", help="list components in one parent system")
     system.add_argument("--name", required=True)
     system.set_defaults(handler=command_system)
+
+    gate = subparsers.add_parser(
+        "gate", help="check whether a project may enter sample or full implementation"
+    )
+    gate.add_argument("--query", required=True)
+    gate.add_argument("--risk", choices=("low", "medium", "high"), required=True)
+    gate.add_argument("--target-stage", choices=("sample", "full"), required=True)
+    gate.add_argument("--user-facing", action="store_true")
+    gate.set_defaults(handler=command_gate)
     return parser
 
 

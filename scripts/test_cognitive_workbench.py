@@ -183,6 +183,194 @@ class ProjectIndexTests(unittest.TestCase):
             self.assertEqual(reader["interface_baseline"]["primary_action"], "继续阅读")
 
 
+class CollaborativeDefinitionGateTests(unittest.TestCase):
+    def upsert_baseline(
+        self, index: Path, project: Path, baseline: dict[str, str]
+    ) -> subprocess.CompletedProcess[str]:
+        return run(
+            "python3",
+            str(PROJECT_INDEX),
+            "--index",
+            str(index),
+            "upsert",
+            "--name",
+            "高返工产品",
+            "--root",
+            str(project),
+            "--planning-baseline-json",
+            json.dumps(baseline, ensure_ascii=False),
+            "--status",
+            "active",
+        )
+
+    def check_gate(
+        self,
+        index: Path,
+        *,
+        risk: str,
+        target_stage: str,
+        user_facing: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        arguments = [
+            "python3",
+            str(PROJECT_INDEX),
+            "--index",
+            str(index),
+            "gate",
+            "--query",
+            "高返工产品",
+            "--risk",
+            risk,
+            "--target-stage",
+            target_stage,
+        ]
+        if user_facing:
+            arguments.append("--user-facing")
+        return run(*arguments)
+
+    def test_high_risk_work_requires_user_owned_definition_and_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "source"
+            project.mkdir()
+            index = root / "index.json"
+
+            inferred = self.upsert_baseline(
+                index,
+                project,
+                {
+                    "purpose_status": "assistant_inferred",
+                    "boundary_status": "draft",
+                    "design_status": "draft",
+                    "sample_status": "pending",
+                    "baseline_status": "current",
+                },
+            )
+            self.assertEqual(inferred.returncode, 0, inferred.stderr)
+            blocked = self.check_gate(
+                index, risk="high", target_stage="full", user_facing=True
+            )
+            self.assertEqual(blocked.returncode, 1, blocked.stderr)
+            blocked_payload = json.loads(blocked.stdout)
+            self.assertFalse(blocked_payload["allowed"])
+            self.assertTrue(
+                any("purpose" in reason for reason in blocked_payload["reasons"])
+            )
+            self.assertIn(
+                "planning baseline has no traceable source",
+                blocked_payload["reasons"],
+            )
+
+            confirmed = self.upsert_baseline(
+                index,
+                project,
+                {
+                    "purpose_status": "user_confirmed",
+                    "boundary_status": "user_confirmed",
+                    "design_status": "user_confirmed",
+                    "sample_status": "pending",
+                    "baseline_status": "current",
+                    "baseline_source": "thread-1",
+                },
+            )
+            self.assertEqual(confirmed.returncode, 0, confirmed.stderr)
+            sample_allowed = self.check_gate(
+                index, risk="high", target_stage="sample", user_facing=True
+            )
+            self.assertEqual(sample_allowed.returncode, 0, sample_allowed.stderr)
+            self.assertTrue(json.loads(sample_allowed.stdout)["allowed"])
+
+            full_blocked = self.check_gate(
+                index, risk="high", target_stage="full", user_facing=True
+            )
+            self.assertEqual(full_blocked.returncode, 1, full_blocked.stderr)
+            self.assertIn(
+                "representative sample is not accepted",
+                json.loads(full_blocked.stdout)["reasons"],
+            )
+
+            unjustified_skip = self.upsert_baseline(
+                index,
+                project,
+                {
+                    "purpose_status": "user_confirmed",
+                    "boundary_status": "user_confirmed",
+                    "design_status": "user_confirmed",
+                    "sample_status": "not_required",
+                    "baseline_status": "current",
+                    "baseline_source": "thread-1",
+                },
+            )
+            self.assertEqual(unjustified_skip.returncode, 0, unjustified_skip.stderr)
+            skip_blocked = self.check_gate(
+                index, risk="high", target_stage="full", user_facing=True
+            )
+            self.assertEqual(skip_blocked.returncode, 1, skip_blocked.stderr)
+            self.assertIn(
+                "sample is marked not_required without a reason",
+                json.loads(skip_blocked.stdout)["reasons"],
+            )
+
+            accepted = self.upsert_baseline(
+                index,
+                project,
+                {
+                    "purpose_status": "user_confirmed",
+                    "boundary_status": "user_confirmed",
+                    "design_status": "user_confirmed",
+                    "sample_status": "accepted",
+                    "baseline_status": "current",
+                    "baseline_source": "thread-1",
+                },
+            )
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            full_allowed = self.check_gate(
+                index, risk="high", target_stage="full", user_facing=True
+            )
+            self.assertEqual(full_allowed.returncode, 0, full_allowed.stderr)
+            self.assertTrue(json.loads(full_allowed.stdout)["allowed"])
+
+    def test_low_risk_mechanical_work_is_not_blocked_by_missing_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "source"
+            project.mkdir()
+            index = root / "index.json"
+            created = self.upsert_baseline(index, project, {})
+            self.assertEqual(created.returncode, 0, created.stderr)
+
+            allowed = self.check_gate(index, risk="low", target_stage="full")
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            self.assertTrue(json.loads(allowed.stdout)["allowed"])
+
+    def test_stale_baseline_pauses_medium_risk_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "source"
+            project.mkdir()
+            index = root / "index.json"
+            created = self.upsert_baseline(
+                index,
+                project,
+                {
+                    "purpose_status": "user_confirmed",
+                    "boundary_status": "user_confirmed",
+                    "design_status": "user_confirmed",
+                    "sample_status": "not_required",
+                    "sample_not_required_reason": "non-visual backend change",
+                    "baseline_status": "stale",
+                },
+            )
+            self.assertEqual(created.returncode, 0, created.stderr)
+
+            blocked = self.check_gate(index, risk="medium", target_stage="full")
+            self.assertEqual(blocked.returncode, 1, blocked.stderr)
+            self.assertIn(
+                "planning baseline is missing, stale or superseded",
+                json.loads(blocked.stdout)["reasons"],
+            )
+
+
 class SystemCoherenceReferenceTests(unittest.TestCase):
     def test_system_coherence_contract_contains_required_boundaries(self) -> None:
         reference = (SKILL_ROOT / "references" / "system-coherence.md").read_text(
@@ -203,6 +391,8 @@ class SystemCoherenceReferenceTests(unittest.TestCase):
             "当前交付物不负责",
             "纠正传播",
             "interface-translation.md",
+            "collaborative-definition.md",
+            "scripts/project_index.py gate",
         ):
             self.assertIn(phrase, reference)
 
@@ -211,6 +401,20 @@ class SystemCoherenceReferenceTests(unittest.TestCase):
         self.assertIn("scripts/project_index.py system", skill)
         self.assertIn("planning_baseline", skill)
         self.assertIn("interface_baseline", skill)
+        self.assertIn("references/collaborative-definition.md", skill)
+
+        collaborative = (
+            SKILL_ROOT / "references" / "collaborative-definition.md"
+        ).read_text(encoding="utf-8")
+        for phrase in (
+            "目的的归属属于用户",
+            "assistant_inferred",
+            "方案竞争",
+            "渐进式开工",
+            "语义变化暂停",
+            "scripts/project_index.py gate",
+        ):
+            self.assertIn(phrase, collaborative)
 
 
 class InterfaceTranslationReferenceTests(unittest.TestCase):
