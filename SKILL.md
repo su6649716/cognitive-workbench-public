@@ -17,9 +17,7 @@ description: 中文名“认知助手”。当用户说“认知一下”“启�
 
 不要把十三项能力展示成课程、按钮或检查表。用户继续自然表达；你负责识别场景、取得已有背景并选择一个最相关的工作流。
 
-## 自动介入与手动入口
-
-用户不需要记住何时调用。自然讨论已有项目时，按 [routing.md](references/routing.md) 主动识别目标纠正、重要新想法、拍板、暂缓和结果回流；按 [event-lifecycle.md](references/event-lifecycle.md) 恢复和更新已有记录。普通联想不建档，有价值的待定也不强制变成测试。自动介入以完成当前工作为主，内部检查和记录不展开成报告；仅在需要用户知道变化或作出决定时简短呈现。
+## 最简使用入口
 
 把“认知一下”当作用户唯一需要记住的认知前缀。以下表达都视为显式调用：
 
@@ -138,6 +136,4 @@ audit   检查任务关联、假设回看点和同阶段重复事件
 
 ## 全局接入
 
-Skill本身不是永久后台。只有当用户明确要求安装或调整全局自动路由时，才读取并应用 [global-routing-snippet.md](references/global-routing-snippet.md)；不要擅自修改全局 `AGENTS.md`。周度运行需要定时任务，并在任务提示中显式调用 `$cognitive-workbench` 的项目复盘模式。
-
-设置定时整理前先检查已有自动任务，优先更新同职责任务；按 [portfolio-review.md](references/portfolio-review.md) 查漏和核对。规则自动选择依赖当前助手执行，不能保证未读取的会话已被记录。修改自动介入规则后，使用 [behavior-replay.md](references/behavior-replay.md) 的场景检查；回放不等于真实使用已验证。
+Skill本身不是永久后台。只有当用户明确要求安装全局自动路由时，才读取并应用 [global-routing-snippet.md](references/global-routing-snippet.md)；不要擅自修改全局 `AGENTS.md`。周度运行需要另建定时任务，并在任务提示中显式调用 `$cognitive-workbench` 的项目复盘模式。
