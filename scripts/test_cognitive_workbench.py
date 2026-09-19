@@ -14,6 +14,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 LEDGER = SCRIPT_DIR / "cognitive_ledger.py"
 PROJECT_INDEX = SCRIPT_DIR / "project_index.py"
 GIT_GUARD = SCRIPT_DIR / "git_project_guard.py"
+STATE_SYNC = SCRIPT_DIR / "sync_state.py"
 SKILL_ROOT = SCRIPT_DIR.parent
 
 
@@ -659,6 +660,71 @@ class GitGuardTests(unittest.TestCase):
                 "worker.py",
             )
             self.assertFalse(json.loads(open_result.stdout)["closure"]["ready"])
+
+
+class StateSyncTests(unittest.TestCase):
+    def test_snapshot_validates_and_copies_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            codex_home = root / "codex"
+            repo = root / "state-repo"
+            (codex_home / "memories").mkdir(parents=True)
+            (codex_home / "automations" / "weekly").mkdir(parents=True)
+            repo.mkdir()
+            run("git", "init", "-b", "main", cwd=repo)
+            (codex_home / "memories" / "PROJECT_INDEX.json").write_text(
+                '{"schema_version": 1, "projects": []}\n', encoding="utf-8"
+            )
+            (codex_home / "memories" / "COGNITIVE_EVENTS.jsonl").write_text(
+                '{"id":"evt-1","record_kind":"event"}\n', encoding="utf-8"
+            )
+            (codex_home / "AGENTS.md").write_text("# rules\n", encoding="utf-8")
+            (codex_home / "automations" / "weekly" / "automation.toml").write_text(
+                'name = "weekly"\n', encoding="utf-8"
+            )
+
+            result = run(
+                "python3",
+                str(STATE_SYNC),
+                "--codex-home",
+                str(codex_home),
+                "--repo",
+                str(repo),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["ledger_rows"], 1)
+            self.assertTrue((repo / "memories" / "PROJECT_INDEX.json").is_file())
+            self.assertTrue((repo / "automations" / "weekly" / "automation.toml").is_file())
+
+    def test_snapshot_blocks_secret_like_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            codex_home = root / "codex"
+            repo = root / "state-repo"
+            (codex_home / "memories").mkdir(parents=True)
+            repo.mkdir()
+            run("git", "init", "-b", "main", cwd=repo)
+            (codex_home / "memories" / "PROJECT_INDEX.json").write_text(
+                '{"schema_version": 1, "projects": []}\n', encoding="utf-8"
+            )
+            (codex_home / "memories" / "COGNITIVE_EVENTS.jsonl").write_text(
+                '{"id":"evt-1"}\n', encoding="utf-8"
+            )
+            (codex_home / "AGENTS.md").write_text(
+                "token ghp_abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8"
+            )
+
+            result = run(
+                "python3",
+                str(STATE_SYNC),
+                "--codex-home",
+                str(codex_home),
+                "--repo",
+                str(repo),
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("secret scan blocked", result.stdout)
 
 
 if __name__ == "__main__":

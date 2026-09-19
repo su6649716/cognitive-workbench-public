@@ -139,3 +139,5 @@ audit   检查任务关联、假设回看点和同阶段重复事件
 ## 全局接入
 
 Skill本身不是永久后台。只有当用户明确要求安装全局自动路由时，才读取并应用 [global-routing-snippet.md](references/global-routing-snippet.md)；不要擅自修改全局 `AGENTS.md`。周度运行需要另建定时任务，并在任务提示中显式调用 `$cognitive-workbench` 的项目复盘模式。
+
+用户明确要求把 Skill 产物同步云端时，读取 [cloud-sync.md](references/cloud-sync.md)。源码与个人状态分别进入私有仓库；状态同步必须先校验结构和扫描密钥，恢复必须比较合并，不能用云端快照直接覆盖较新的本地基线。
