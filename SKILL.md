@@ -20,7 +20,7 @@ description: 中文名“认知助手”。当用户说“认知一下”“启�
 ## 冷启动三步（新项目第一次用）
 
 1. 登记项目身份：`scripts/project_index.py upsert --name <项目名> --root <源码根目录>`（有别名、成品入口的一并登记）；
-2. 跑一遍 `scripts/cognitive_ledger.py audit`，确认账本干净、无历史包袱；
+2. 查询该项目近期事件，恢复已有背景；需要时运行 `scripts/cognitive_ledger.py audit`，只核对该项目相关发现，不以其他项目的问题阻断开工；
 3. 形成第一条规划基线（`--planning-baseline-json`），并标来源（`user_explicit` 还是 `assistant_inferred`）。
 
 ## 最简使用入口
@@ -49,7 +49,7 @@ description: 中文名“认知助手”。当用户说“认知一下”“启�
 
 ## 先路由，再行动
 
-0. 先跑一次 `scripts/cognitive_ledger.py audit`（测试时用 `--ledger` 指向测试账本）。若 `overdue_open_events` 非空，先回看到期假设再处理当前请求——到期不回看的追踪等于白追踪。新建任何事件前，先用 `list` 查同项目近期事件，确认不是重复建档。
+0. 需要假设追踪或任务收口时，可运行 `scripts/cognitive_ledger.py audit`（测试时用 `--ledger` 指向测试账本），只处理与当前项目和任务有关的发现。到期本身不代表已有结果；先取得验证证据，不让其他项目的到期事项抢占当前请求。全局回看只在用户明确要求或定时任务指定时进行。新建任何事件前，先用 `list` 查同项目近期事件，确认不是重复建档。遇到重复建档、确认来源混淆或完成措辞超过证据时，读取 [anti-patterns.md](references/anti-patterns.md) 中相关条目。
 1. 读取当前请求、当前任务历史、相关项目文件和已有结果。
    - 优先级：当前用户原话与真实结果 > 当前项目文档 > 相关历史任务 > 长期记忆中的稳定规则。
    - 需要跨任务背景时，使用可用的任务读取工具；需要长期偏好时，按项目关键词搜索 `~/.codex/memories/PROFILE.md`、`ACTIVE.md` 和 `LEARNINGS.md`，不要无差别加载全部内容。
@@ -146,6 +146,8 @@ audit   检查任务关联、假设回看点和同阶段重复事件
 本地提交与云端推送分开授权：安全的本地阶段提交默认允许；创建远程仓库、修改远程地址、决定公开/私有或推送云端，只有用户明确要求，或当前仓库已设置 `git config --local codex.autoPush true` 时才执行。
 
 ## 全局接入
+
+`COGNITIVE_HOME` 目前仅覆盖账本与项目索引脚本的默认存储位置。云端同步、全局路由与自动任务仍使用各自配置；跨 runtime 使用时逐项核对路径，不声称已自动迁移或完整支持。
 
 Skill本身不是永久后台。只有当用户明确要求安装全局自动路由时，才读取并应用 [global-routing-snippet.md](references/global-routing-snippet.md)；不要擅自修改全局 `AGENTS.md`。周度运行需要另建定时任务，并在任务提示中显式调用 `$cognitive-workbench` 的项目复盘模式。
 
