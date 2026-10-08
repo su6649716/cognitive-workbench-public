@@ -17,6 +17,12 @@ description: 中文名“认知助手”。当用户说“认知一下”“启�
 
 不要把十三项能力展示成课程、按钮或检查表。用户继续自然表达；你负责识别场景、取得已有背景并选择一个最相关的工作流。
 
+## 冷启动三步（新项目第一次用）
+
+1. 登记项目身份：`scripts/project_index.py upsert --name <项目名> --root <源码根目录>`（有别名、成品入口的一并登记）；
+2. 跑一遍 `scripts/cognitive_ledger.py audit`，确认账本干净、无历史包袱；
+3. 形成第一条规划基线（`--planning-baseline-json`），并标来源（`user_explicit` 还是 `assistant_inferred`）。
+
 ## 最简使用入口
 
 把“认知一下”当作用户唯一需要记住的认知前缀。以下表达都视为显式调用：
@@ -43,6 +49,7 @@ description: 中文名“认知助手”。当用户说“认知一下”“启�
 
 ## 先路由，再行动
 
+0. 先跑一次 `scripts/cognitive_ledger.py audit`（测试时用 `--ledger` 指向测试账本）。若 `overdue_open_events` 非空，先回看到期假设再处理当前请求——到期不回看的追踪等于白追踪。新建任何事件前，先用 `list` 查同项目近期事件，确认不是重复建档。
 1. 读取当前请求、当前任务历史、相关项目文件和已有结果。
    - 优先级：当前用户原话与真实结果 > 当前项目文档 > 相关历史任务 > 长期记忆中的稳定规则。
    - 需要跨任务背景时，使用可用的任务读取工具；需要长期偏好时，按项目关键词搜索 `~/.codex/memories/PROFILE.md`、`ACTIVE.md` 和 `LEARNINGS.md`，不要无差别加载全部内容。
@@ -92,7 +99,7 @@ list    折叠更新后查询当前事件
 audit   检查任务关联、假设回看点和同阶段重复事件
 ```
 
-默认账本位于 `~/.codex/memories/COGNITIVE_EVENTS.jsonl`。除非用户明确要求或当前工作流已经形成应追踪的行动，不要写入账本。
+默认账本位于 `~/.codex/memories/COGNITIVE_EVENTS.jsonl`（`COGNITIVE_HOME` 环境变量可覆盖默认 `~/.codex`，用于 Codex 之外的 runtime）。除非用户明确要求或当前工作流已经形成应追踪的行动，不要写入账本。
 
 记录前必须先查近期相关事件：
 
@@ -117,7 +124,7 @@ audit   检查任务关联、假设回看点和同阶段重复事件
 
 ## 项目入口索引
 
-当真实项目根已经确认时，使用 `scripts/project_index.py upsert` 保存最小身份：用户使用的名称与别名、源码根目录、成品或启动入口、关联任务、远程地址、当前状态和最近检查点。属于更大业务系统时，同时保存父系统名、当前组件角色、上下游组件、产品文档与事实真源。系统、产品或工具已经形成稳定决定时，可用 `--planning-baseline-json` 保存紧凑规划主线；同时记录目的、边界、方案、样板与基线的新鲜度状态及来源。面向人使用的交付物已经确认操作与视觉语义时，可用 `--interface-baseline-json` 保存界面合同。默认索引位于 `~/.codex/memories/PROJECT_INDEX.json`。
+当真实项目根已经确认时，使用 `scripts/project_index.py upsert` 保存最小身份：用户使用的名称与别名、源码根目录、成品或启动入口、关联任务、远程地址、当前状态和最近检查点。属于更大业务系统时，同时保存父系统名、当前组件角色、上下游组件、产品文档与事实真源。系统、产品或工具已经形成稳定决定时，可用 `--planning-baseline-json` 保存紧凑规划主线；同时记录目的、边界、方案、样板与基线的新鲜度状态及来源。面向人使用的交付物已经确认操作与视觉语义时，可用 `--interface-baseline-json` 保存界面合同。默认索引位于 `~/.codex/memories/PROJECT_INDEX.json`（`COGNITIVE_HOME` 环境变量可覆盖默认 `~/.codex`，用于 Codex 之外的 runtime）。
 
 - 同一项目不同叫法合并为一条，不按任务标题重复建项目。
 - 只保存已验证存在的本地路径；URL、命令或本地服务地址放入 `run_entries`。

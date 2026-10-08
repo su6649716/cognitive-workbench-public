@@ -602,6 +602,63 @@ class LedgerTests(unittest.TestCase):
             self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
             self.assertTrue(json.loads(audit.stdout)["healthy"])
 
+    def test_due_lists_overdue_and_watch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            ledger = Path(temporary) / "events.jsonl"
+            overdue = run(
+                "python3",
+                str(LEDGER),
+                "--ledger",
+                str(ledger),
+                "record",
+                "--type",
+                "hypothesis",
+                "--project",
+                "测试项目",
+                "--thread-id",
+                "thread-due",
+                "--source",
+                "test",
+                "--statement",
+                "昨天到期的判断",
+                "--due-at",
+                "2020-01-01T00:00:00+08:00",
+            )
+            self.assertEqual(overdue.returncode, 0, overdue.stderr)
+            watching = run(
+                "python3",
+                str(LEDGER),
+                "--ledger",
+                str(ledger),
+                "record",
+                "--type",
+                "hypothesis",
+                "--project",
+                "测试项目",
+                "--thread-id",
+                "thread-watch",
+                "--source",
+                "test",
+                "--statement",
+                "等触发条件的判断",
+                "--review-trigger",
+                "首个真实样本返回后",
+            )
+            self.assertEqual(watching.returncode, 0, watching.stderr)
+
+            due = run(
+                "python3",
+                str(LEDGER),
+                "--ledger",
+                str(ledger),
+                "due",
+            )
+            self.assertEqual(due.returncode, 1, due.stdout + due.stderr)
+            payload = json.loads(due.stdout)
+            self.assertEqual(len(payload["overdue"]), 1)
+            self.assertEqual(len(payload["watch"]), 1)
+            self.assertEqual(payload["overdue"][0]["statement"], "昨天到期的判断")
+
 
 class GitGuardTests(unittest.TestCase):
     def test_skill_marker_and_close_check(self) -> None:

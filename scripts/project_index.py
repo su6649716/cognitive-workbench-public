@@ -16,8 +16,19 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_INDEX = Path.home() / ".codex" / "memories" / "PROJECT_INDEX.json"
 STATUSES = {"active", "validating", "maintenance", "paused", "closed", "unknown"}
+
+
+def cognitive_home() -> Path:
+    """State base dir. Set COGNITIVE_HOME to run this skill outside Codex
+    (e.g. Claude Code); defaults to the Codex home."""
+    override = os.environ.get("COGNITIVE_HOME")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".codex"
+
+
+DEFAULT_INDEX = cognitive_home() / "memories" / "PROJECT_INDEX.json"
 PURPOSE_READY = {"user_explicit", "user_confirmed"}
 CONFIRMATION_READY = {"user_confirmed", "implementing", "validated"}
 SAMPLE_READY = {"accepted", "not_required"}

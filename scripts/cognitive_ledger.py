@@ -6,13 +6,23 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
 from typing import Any
 
 
-DEFAULT_LEDGER = Path.home() / ".codex" / "memories" / "COGNITIVE_EVENTS.jsonl"
+def cognitive_home() -> Path:
+    """State base dir. Set COGNITIVE_HOME to run this skill outside Codex
+    (e.g. Claude Code); defaults to the Codex home."""
+    override = os.environ.get("COGNITIVE_HOME")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".codex"
+
+
+DEFAULT_LEDGER = cognitive_home() / "memories" / "COGNITIVE_EVENTS.jsonl"
 EVENT_TYPES = {"expansion_gate", "hypothesis", "task_close", "portfolio_review"}
 STATUSES = {"open", "active", "supported", "refuted", "inconclusive", "closed", "cancelled"}
 
@@ -411,6 +421,35 @@ def command_audit(args: argparse.Namespace) -> int:
     return 0 if payload["healthy"] else 1
 
 
+def command_due(args: argparse.Namespace) -> int:
+    """List hypotheses needing review now: overdue by due_at, plus
+    open/active ones waiting on a review_trigger (human judgment)."""
+    events = fold_events(load_lines(args.ledger))
+    due_now = dt.datetime.now().astimezone()
+    overdue: list[dict[str, str]] = []
+    watch: list[dict[str, str]] = []
+    for event in events:
+        if event.get("type") != "hypothesis":
+            continue
+        if event.get("status") not in {"open", "active"}:
+            continue
+        brief = {
+            "id": str(event.get("id")),
+            "project": str(event.get("project", "")),
+            "statement": str(event.get("statement", ""))[:60],
+            "status": str(event.get("status")),
+        }
+        due_at = event.get("due_at")
+        if due_at and parse_iso(str(due_at)) <= due_now:
+            brief["due_at"] = str(due_at)
+            overdue.append(brief)
+        elif event.get("review_trigger"):
+            brief["review_trigger"] = str(event.get("review_trigger"))
+            watch.append(brief)
+    print(json.dumps({"overdue": overdue, "watch": watch}, ensure_ascii=False, indent=2))
+    return 0 if not overdue else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
@@ -457,6 +496,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit = subparsers.add_parser("audit", help="report linkage, review and duplication gaps")
     audit.set_defaults(handler=command_audit)
+
+    due = subparsers.add_parser("due", help="list hypotheses needing review now")
+    due.set_defaults(handler=command_due)
 
     return parser
 
