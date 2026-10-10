@@ -86,6 +86,61 @@ class ContinuityTests(unittest.TestCase):
                           'session_id':'s','turn_id':'t','prompt':'只读审计，不修改'})
         self.assertFalse(self.home.exists())
 
+    def test_08c_scoped_restrictions_allow_git_observation(self):
+        prompts = [
+            '修复温度函数，不修改全局配置',
+            '修改前端，不要修改后端',
+            '修好页面，不要动其他模块',
+            '其他模块只读，这个页面直接修复',
+            '先分析再修复，不修改全局配置',
+            '先分析后修复',
+            '先分析，然后直接做',
+            '修复“不修改全局配置”的误判',
+            '给这个页面加功能，不修改数据库',
+        ]
+        for number, prompt in enumerate(prompts):
+            with self.subTest(prompt=prompt), patch.dict(os.environ, {'COGNITIVE_HOME': str(self.home)}):
+                turn = str(number)
+                hooks.handle({'hook_event_name':'UserPromptSubmit','cwd':str(self.repo),
+                              'session_id':'s','turn_id':turn,'prompt':prompt})
+                self.assertTrue(ps.runtime_marker(self.home, 's', turn).is_file())
+                (self.repo/'README.md').write_text('changed ' + turn, encoding='utf8')
+                hooks.handle({'hook_event_name':'Stop','cwd':str(self.repo),
+                              'session_id':'s','turn_id':turn})
+                observed = ps.read_index(self.home)['projects'][0]['last_observed_change']
+                self.assertEqual(observed['paths'], ['README.md'])
+                self.assertFalse(ps.runtime_marker(self.home, 's', turn).exists())
+                self.assertEqual((self.home/ps.LEDGER).read_text(), '')
+
+    def test_08d_whole_task_readonly_and_plan_mode_never_write(self):
+        prompts = [
+            '只读审计，不修改', '请只读检查这个项目', '不要修改任何文件',
+            '先别做', '先别做任何修改', '请不要动代码', '只看看项目结构',
+            '先分析一下这个问题', '仅审计当前代码', 'Read-only audit this project',
+            '修复方向可以讨论，但先不要修改任何文件',
+            '背景' * 1000 + '，本轮只读审计',
+        ]
+        for number, prompt in enumerate(prompts + ['直接修复项目']):
+            with self.subTest(prompt=prompt), patch.dict(os.environ, {'COGNITIVE_HOME': str(self.home)}):
+                ev = {'hook_event_name':'UserPromptSubmit','cwd':str(self.repo),
+                      'session_id':'s','turn_id':str(number),'prompt':prompt}
+                if number == len(prompts): ev['permission_mode'] = 'plan'
+                hooks.handle(ev)
+                hooks.handle(dict(ev, hook_event_name='Stop'))
+                self.assertFalse(self.home.exists())
+
+    def test_08e_readonly_existing_state_stays_byte_identical(self):
+        ps.begin(self.home, self.repo)
+        files = [self.home/ps.STATE_FILE, self.home/ps.INDEX, self.home/ps.LEDGER]
+        before = [path.read_bytes() for path in files]
+        with patch.dict(os.environ, {'COGNITIVE_HOME': str(self.home)}):
+            ev = {'hook_event_name':'UserPromptSubmit','cwd':str(self.repo),
+                  'session_id':'s','turn_id':'t','prompt':'只读审计，不修改任何文件'}
+            hooks.handle(ev)
+            hooks.handle(dict(ev, hook_event_name='Stop'))
+        self.assertEqual(before, [path.read_bytes() for path in files])
+        self.assertFalse(ps.runtime_marker(self.home, 's', 't').exists())
+
     def test_09_hook_records_only_real_git_change(self):
         with patch.dict(os.environ, {'COGNITIVE_HOME': str(self.home)}):
             begin={'hook_event_name':'UserPromptSubmit','cwd':str(self.repo),'session_id':'s1','turn_id':'t1'}

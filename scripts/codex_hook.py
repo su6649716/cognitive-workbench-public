@@ -2,7 +2,8 @@
 """Optional opt-in Codex SessionStart / UserPromptSubmit / Stop hook.
 
 Prints compact trusted context only; deterministic Git change observation never
-invents semantic decisions. Fails open without reading transcripts/prompt text.
+invents semantic decisions. Prompt intent is checked transiently, never stored;
+transcripts are not read. Observation is not permission to edit project files.
 """
 from __future__ import annotations
 import json
@@ -13,6 +14,36 @@ from project_session import (cognitive_home, init, begin, identify_project,
                              capture_baseline, observe_stop)
 
 MAX_CONTEXT = 2500
+
+# These are whole-task directives, not a substring blacklist. In particular,
+# "不修改全局配置" and "其他模块只读" constrain targets, not the entire task.
+_PREFIX = r'^(?:(?:请|本轮|本次|这次|现在|你|帮我|就|进行|做|但是|但|不过)\s*)*'
+_READONLY_TASK = re.compile(
+    _PREFIX + r'(?:只读(?:审计|分析|检查|审查|查看|模式)|只读$|'
+    r'只看看|仅审计|只审查|只(?:分析|检查|查看)|先别做$|read[- ]only\b)', re.I)
+_NO_WRITE_TASK = re.compile(
+    _PREFIX + r'(?:先)?(?:不要|不|别|禁止)(?:做|进行)?'
+    r'(?:任何|所有|一切)?(?:修改|改动|变更|写入|动手|动)'
+    r'(?:(?:任何|所有|一切)?(?:项目文件|文件|代码|内容|东西))?'
+    r'(?:操作)?(?:一下|了)?[。.!！]?$', re.I)
+_ANALYZE_FIRST = re.compile(_PREFIX + r'先分析')
+_EXECUTE_LATER = re.compile(
+    r'(?:再|然后|接着|随后|之后|后|直接)(?:去|就|开始)?\s*'
+    r'(?:修复|修改|实现|开发|实施|执行|动手|做|改|修)')
+
+
+def readonly_prompt(prompt: str) -> bool:
+    """Conservative, limited task-intent check, not an authorization parser.
+
+    Explicit whole-task read-only/no-write instructions win. "先分析再修复"
+    is sequencing; scoped restrictions do not disable Git observation elsewhere.
+    Never truncate away a later explicit whole-task no-write instruction.
+    """
+    clauses = [part.strip() for part in re.split(r'[，,；;。.!！?？\n]+', prompt)]
+    if any(_READONLY_TASK.search(part) or _NO_WRITE_TASK.fullmatch(part)
+           for part in clauses):
+        return True
+    return any(_ANALYZE_FIRST.search(part) for part in clauses) and not _EXECUTE_LATER.search(prompt)
 
 
 def context_text(data: dict) -> str:
@@ -55,9 +86,8 @@ def handle(data: dict) -> dict:
         # SessionStart never creates state: a read-only conversation should stay read-only.
         # Explicit read-only prompts and Codex plan mode also never initialize it.
         prompt = data.get('prompt') or ''
-        readonly = event == 'SessionStart' or data.get('permission_mode') == 'plan' or bool(
-            re.search(r'只读|先分析|先别做|不要修改|不修改|不要动|只看看|仅审计|只审查', str(prompt)[:1500])
-        )
+        readonly = (event == 'SessionStart' or data.get('permission_mode') == 'plan'
+                    or readonly_prompt(str(prompt)))
         if not readonly:
             init(home)
         project = begin(home, root, readonly=True)
