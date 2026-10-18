@@ -130,6 +130,17 @@ def plan_files(root: Path) -> list[str]:
     return [str(root / item) for item in candidates if (root / item).is_file()]
 
 
+def development_checks() -> dict:
+    """Restore required checks, never fabricate the result of performing them."""
+    return {
+        'reference': str(Path(__file__).resolve().parent.parent / 'references/development-checks.md'),
+        'before_changes': '核对定稿边界与实际运行依赖',
+        'on_correction': '排查所有同类对象，仅修复不一致处',
+        'before_completion': '按真实页面或实际接口、命令取得对应验收证据',
+        'status': 'not_evaluated',
+    }
+
+
 def register(home: Path, root: Path, name: str | None) -> dict:
     with file_lock(home / INDEX):
         doc = validate_index(json.loads((home / INDEX).read_text(encoding='utf-8')))
@@ -158,6 +169,7 @@ def context(home: Path, root: Path, project: dict | None) -> dict:
             'last_checkpoint': project.get('last_checkpoint') if project else None,
             'planning_files': plan_files(root), 'decision_events': len(events),
             'recent_decisions': [e.get('statement') for e in events[-3:]],
+            'development_checks': development_checks(),
             'state_home': str(home)}
 
 
@@ -184,7 +196,7 @@ def begin(home: Path, path: Path, *, name: str | None = None, session: str | Non
     if readonly:
         if not (home / STATE_FILE).exists():
             return {'project_detected': True, 'registered': False, 'state_initialized': False,
-                    'project_root': str(root)}
+                    'project_root': str(root), 'development_checks': development_checks()}
         doc = read_index(home)
         found = find_project(doc, root)
     else:

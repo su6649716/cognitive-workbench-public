@@ -25,7 +25,7 @@ class ProjectBaselineContracts(unittest.TestCase):
 
     def test_P02_current_entry_and_complete_engineering_routing(self):
         text=self.read('SKILL.md')
-        self.assertIn('version: "2.4.0"',text)
+        self.assertIn('version: "2.4.1"',text)
         for name in ('project-baseline.md','project-baseline-defaults.md','engineering-baseline.md','architecture-baseline.md'):
             self.assertIn('(references/'+name+')',text)
 

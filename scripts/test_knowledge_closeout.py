@@ -149,7 +149,7 @@ class KnowledgeContracts(unittest.TestCase):
     def read(self,p):return (ROOT/p).read_text(encoding='utf-8')
     def test_one_skill_with_current_version_and_direct_reference(self):
         self.assertEqual(list(ROOT.rglob('SKILL.md')),[ROOT/'SKILL.md'])
-        self.assertIn('version: "2.4.0"',self.read('SKILL.md'))
+        self.assertIn('version: "2.4.1"',self.read('SKILL.md'))
         self.assertIn('(references/knowledge-closeout.md)',self.read('SKILL.md'))
         self.assertNotIn('$neat-freak',self.read('agents/openai.yaml'))
     def test_no_new_event_type_or_memory_store(self):
