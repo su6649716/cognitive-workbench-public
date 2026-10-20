@@ -137,6 +137,7 @@ def development_checks() -> dict:
         'before_changes': '核对定稿边界与实际运行依赖',
         'on_correction': '排查所有同类对象，仅修复不一致处',
         'before_completion': '按真实页面或实际接口、命令取得对应验收证据',
+        'ui_boundaries': '新增或修改UI组件时，主动检查数量增长、长内容、窄容器及必要异常状态；复用公共规则，验证完整访问、关键操作和选择保留，反查同类消费者',
         'status': 'not_evaluated',
     }
 

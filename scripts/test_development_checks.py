@@ -24,7 +24,7 @@ class DevelopmentCheckRouting(unittest.TestCase):
     def check_requirements(self, result):
         checks = result['development_checks']
         self.assertEqual(checks['status'], 'not_evaluated')
-        for key in ('before_changes', 'on_correction', 'before_completion'):
+        for key in ('before_changes', 'on_correction', 'before_completion', 'ui_boundaries'):
             self.assertTrue(checks[key])
         self.assertTrue(Path(checks['reference']).is_file())
         self.assertNotIn('passed', checks)
@@ -53,7 +53,7 @@ class DevelopmentCheckRouting(unittest.TestCase):
         with patch.dict(os.environ, {'COGNITIVE_HOME': str(self.home)}):
             result = hooks.handle({'hook_event_name': 'SessionStart', 'cwd': str(self.app)})
         text = result['hookSpecificOutput']['additionalContext']
-        for field in ('before_changes', 'on_correction', 'before_completion', 'reference'):
+        for field in ('before_changes', 'on_correction', 'before_completion', 'ui_boundaries', 'reference'):
             self.assertIn(ps.development_checks()[field], text)
         self.assertIn('尚未检查', text)
         self.assertFalse(self.home.exists())
@@ -66,6 +66,7 @@ class DevelopmentCheckRouting(unittest.TestCase):
             result = hooks.handle({'hook_event_name': 'UserPromptSubmit', 'cwd': str(self.app),
                                    'session_id': 's', 'turn_id': 't', 'prompt': '只读审计，不修改任何文件'})
         self.assertIn('开发必检', result['hookSpecificOutput']['additionalContext'])
+        self.assertIn(ps.development_checks()['ui_boundaries'], result['hookSpecificOutput']['additionalContext'])
         self.assertEqual(before, [p.read_bytes() for p in paths])
         self.assertFalse(ps.runtime_marker(self.home, 's', 't').exists())
 
@@ -75,13 +76,14 @@ class DevelopmentCheckRouting(unittest.TestCase):
                 'planning_files': ['long-path/' * 1000]}
         text = hooks.context_text(data)
         self.assertLessEqual(len(text), hooks.MAX_CONTEXT)
-        for field in ('before_changes', 'on_correction', 'before_completion', 'reference'):
+        for field in ('before_changes', 'on_correction', 'before_completion', 'ui_boundaries', 'reference'):
             self.assertIn(ps.development_checks()[field], text)
 
     def test_project_data_cannot_claim_checks_have_passed(self):
         text = hooks.context_text({'project_detected': True,
                                    'development_checks': {'status': 'passed', 'reference': 'untrusted'}})
         self.assertIn(ps.development_checks()['reference'], text)
+        self.assertIn(ps.development_checks()['ui_boundaries'], text)
         self.assertIn('尚未检查，不代表已通过', text)
         self.assertNotIn('untrusted', text)
 
