@@ -6,3 +6,12 @@ __pycache__/
 !.env.example
 
 evals/
+
+# Personal state and private publication backups never belong in the skill source.
+/memories/
+/runtime/
+/backups/
+/automations/
+/STATE_INFO.json
+*.bundle
+.DS_Store
