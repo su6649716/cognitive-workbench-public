@@ -1,1 +1,10 @@
 __pycache__/
+
+# Private runtime state and publication backups
+/memories/
+/runtime/
+/backups/
+/automations/
+/STATE_INFO.json
+*.bundle
+.DS_Store
